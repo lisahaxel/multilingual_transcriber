@@ -78,7 +78,23 @@ body.hide-trans .trans{{display:none}}
 .fab:hover{{transform:scale(1.05)}}
 .fab .badge{{position:absolute;top:-4px;right:-4px;background:var(--accent);color:white;min-width:22px;height:22px;padding:0 6px;border-radius:100px;font-size:.75rem;font-weight:600;display:flex;align-items:center;justify-content:center}}
 .footer{{padding:1.5rem;text-align:center;color:var(--ink-muted);font-size:.8125rem;border-top:1px solid var(--border);background:var(--paper-warm)}}
-@media print{{.player,.controls,.vp,.fab,.tooltip,.vp-backdrop{{display:none!important}}.app{{box-shadow:none}}body{{padding:0;background:white}}}}
+/* Export modal styles */
+.export-modal{{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:2000;display:none;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(2px)}}
+.export-modal.visible{{display:flex}}
+.export-box{{background:var(--paper);border-radius:12px;max-width:400px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.2)}}
+.export-header{{padding:1rem 1.25rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}}
+.export-header h3{{font-family:var(--serif);font-size:1.125rem;font-weight:600}}
+.export-close{{width:32px;height:32px;border-radius:50%;background:var(--paper-warm);border:1px solid var(--border);color:var(--ink);font-size:1.125rem;cursor:pointer;display:grid;place-items:center}}
+.export-content{{padding:1rem 1.25rem;overflow-y:auto;flex:1}}
+.export-content textarea{{width:100%;height:200px;border:1px solid var(--border);border-radius:8px;padding:.75rem;font-family:monospace;font-size:.8125rem;resize:vertical;background:var(--paper-warm)}}
+.export-actions{{padding:1rem 1.25rem;border-top:1px solid var(--border);display:flex;gap:.5rem}}
+.export-actions button{{flex:1;padding:.625rem;font-size:.8125rem;font-weight:500;border-radius:6px;cursor:pointer;min-height:40px}}
+.export-actions .copy-btn{{background:var(--ink);color:var(--paper);border:none}}
+.export-actions .copy-btn:hover{{background:var(--ink-light)}}
+.export-actions .download-btn{{background:var(--paper-warm);color:var(--ink);border:1px solid var(--border)}}
+.export-actions .download-btn:hover{{background:var(--paper-dark)}}
+.export-hint{{font-size:.75rem;color:var(--ink-muted);text-align:center;margin-top:.75rem}}
+@media print{{.player,.controls,.vp,.fab,.tooltip,.vp-backdrop,.export-modal{{display:none!important}}.app{{box-shadow:none}}body{{padding:0;background:white}}}}
 </style></head>
 <body>
 <div class="app">
@@ -106,19 +122,28 @@ body.hide-trans .trans{{display:none}}
 <div class="vp-footer"><button class="exp" onclick="exportVocab('csv')">CSV</button><button class="exp" onclick="exportVocab('txt')">TXT</button><button class="clr" onclick="clearVocab()">Clear</button></div>
 </aside>
 <button class="fab" onclick="toggleVP()" title="Vocabulary"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg><span class="badge" id="vpBadge" style="display:none">0</span></button>
+<!-- Export Modal for mobile-friendly export -->
+<div class="export-modal" id="exportModal">
+<div class="export-box">
+<div class="export-header"><h3 id="exportTitle">Export Vocabulary</h3><button class="export-close" onclick="closeExportModal()">×</button></div>
+<div class="export-content"><textarea id="exportText" readonly></textarea><p class="export-hint">On mobile: Copy text above, then paste into Notes or a file</p></div>
+<div class="export-actions"><button class="copy-btn" onclick="copyExport()">Copy to Clipboard</button><button class="download-btn" onclick="downloadExport()">Download File</button></div>
+</div>
+</div>
 <script>
 const segments={segs_json};
 const wordInfo={words_json};
 const audioName="{safe_name}";
 const srcLang="{src}",tgtLang="{tgt}",srcName="{src_name}",tgtName="{tgt_name}";
 let transVis=true,curSeg=-1,lastWordId=null,vocab=[],curTTWord=null,ttTimeout=null;
+let currentExportContent='',currentExportFilename='',currentExportMime='';
 const audio=document.getElementById('audio'),playBtn=document.getElementById('playBtn'),tooltip=document.getElementById('tooltip');
 let allWords=[];
 
 function buildIndex(){{allWords=[];segments.forEach((s,si)=>{{if(s.words)s.words.forEach((w,wi)=>allWords.push({{si,wi,start:w.start,end:w.end,id:`w-${{si}}-${{wi}}`}}));}});allWords.sort((a,b)=>a.start-b.start);}}
 function init(){{buildIndex();render();loadVocab();let afId=null;const loop=()=>{{updateHL();afId=requestAnimationFrame(loop);}};audio.addEventListener('play',()=>{{playBtn.innerHTML='<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';if(!afId)afId=requestAnimationFrame(loop);}});audio.addEventListener('pause',()=>{{playBtn.innerHTML='<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';if(afId){{cancelAnimationFrame(afId);afId=null;}}updateHL();}});audio.addEventListener('seeked',()=>{{document.querySelector('.word.hl')?.classList.remove('hl');lastWordId=null;curSeg=-1;updateHL();}});audio.addEventListener('timeupdate',()=>{{if(audio.paused)updateHL();}});document.addEventListener('keydown',onKey);document.addEventListener('click',e=>{{if(!e.target.closest('.word')&&!e.target.closest('.tooltip'))hideTT();}});}}
 function toggle(){{audio.paused?audio.play():audio.pause();}}
-function onKey(e){{if(['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName))return;if(e.code==='Space'){{e.preventDefault();toggle();}}else if(e.code==='ArrowLeft'){{e.preventDefault();audio.currentTime=Math.max(0,audio.currentTime-5);}}else if(e.code==='ArrowRight'){{e.preventDefault();audio.currentTime=Math.min(audio.duration,audio.currentTime+5);}}else if(e.code==='Escape'){{hideTT();if(document.getElementById('vp').classList.contains('open'))toggleVP();}}}}
+function onKey(e){{if(['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName))return;if(e.code==='Space'){{e.preventDefault();toggle();}}else if(e.code==='ArrowLeft'){{e.preventDefault();audio.currentTime=Math.max(0,audio.currentTime-5);}}else if(e.code==='ArrowRight'){{e.preventDefault();audio.currentTime=Math.min(audio.duration,audio.currentTime+5);}}else if(e.code==='Escape'){{hideTT();closeExportModal();if(document.getElementById('vp').classList.contains('open'))toggleVP();}}}}
 function render(){{const c=document.getElementById('transcript');c.innerHTML='';segments.forEach((s,si)=>{{const d=document.createElement('div');d.className='segment';d.id=`seg-${{si}}`;d.dataset.start=s.start;d.dataset.end=s.end;let wh='';if(s.words&&s.words.length){{wh=s.words.map((w,wi)=>{{const cl=w.text.replace(/[^\\p{{L}}\\p{{N}}\\-]/gu,'').toLowerCase();return`<span class="word" id="w-${{si}}-${{wi}}" data-start="${{w.start}}" data-end="${{w.end}}" data-cl="${{cl}}" onclick="wordClick(event,${{w.start}})" onmouseenter="wordHover(event)" onmouseleave="wordLeave()">${{w.text}}</span>`;}}).join(' ');}}else{{wh=s.source.split(' ').map(w=>{{const cl=w.replace(/[^\\p{{L}}\\p{{N}}\\-]/gu,'').toLowerCase();return`<span class="word" data-cl="${{cl}}" onclick="wordClick(event,${{s.start}})" onmouseenter="wordHover(event)" onmouseleave="wordLeave()">${{w}}</span>`;}}).join(' ');}}d.innerHTML=`<span class="ts" onclick="seekTo(${{s.start}})">${{s.timestamp}}</span><div class="src-text">${{wh}}</div><div class="trans">${{s.translation||''}}</div>`;c.appendChild(d);}});vocab.forEach(v=>markSaved(v.clean));}}
 function seekTo(t){{audio.currentTime=t;audio.play();}}
 function wordClick(e,t){{e.preventDefault();e.stopPropagation();clearTimeout(ttTimeout);showTT(e.target);seekTo(t);}}
@@ -142,7 +167,93 @@ function saveVocab(){{localStorage.setItem(`vocab_${{srcLang}}_${{tgtLang}}_v1`,
 function loadVocab(){{try{{const s=localStorage.getItem(`vocab_${{srcLang}}_${{tgtLang}}_v1`);if(s){{vocab=JSON.parse(s);updateVPUI();vocab.forEach(v=>markSaved(v.clean));}}}}catch(e){{}}}}
 function rmWord(i){{const v=vocab[i];if(v)markUnsaved(v.clean);vocab.splice(i,1);saveVocab();updateVPUI();}}
 function clearVocab(){{if(confirm('Clear all?')){{vocab.forEach(v=>markUnsaved(v.clean));vocab=[];updateVPUI();saveVocab();}}}}
-async function exportVocab(fmt){{if(!vocab.length){{alert('No vocabulary!');return;}}let c,fn,mt;if(fmt==='csv'){{c=`${{srcName}},${{tgtName}}\\n`+vocab.map(v=>`"${{(v.baseform||v.clean).replace(/"/g,'""')}}","${{(v.translation||'').replace(/"/g,'""')}}"`).join('\\n');fn=`vocab_${{audioName}}_${{srcLang}}-${{tgtLang}}.csv`;mt='text/csv';}}else{{c=`${{srcName}} Vocabulary\\n`+'='.repeat(30)+'\\n\\n'+vocab.map(v=>`${{v.baseform||v.clean}} — ${{v.translation||'?'}}`).join('\\n');fn=`vocab_${{audioName}}_${{srcLang}}-${{tgtLang}}.txt`;mt='text/plain';}}const b=new Blob([c],{{type:mt+';charset=utf-8'}}),u=URL.createObjectURL(b),a=document.createElement('a');a.style.display='none';a.href=u;a.download=fn;document.body.appendChild(a);a.click();setTimeout(()=>{{document.body.removeChild(a);URL.revokeObjectURL(u);}},100);}}
+
+// Mobile-friendly export functions
+function isMobile(){{return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)||window.innerWidth<800;}}
+
+function showExportModal(content,filename,title){{
+currentExportContent=content;
+currentExportFilename=filename;
+document.getElementById('exportTitle').textContent=title;
+document.getElementById('exportText').value=content;
+document.getElementById('exportModal').classList.add('visible');
+}}
+
+function closeExportModal(){{document.getElementById('exportModal').classList.remove('visible');}}
+
+async function copyExport(){{
+try{{
+await navigator.clipboard.writeText(currentExportContent);
+const btn=document.querySelector('.copy-btn');
+const orig=btn.textContent;
+btn.textContent='Copied!';
+setTimeout(()=>btn.textContent=orig,2000);
+}}catch(e){{
+// Fallback for older browsers
+const ta=document.getElementById('exportText');
+ta.select();
+ta.setSelectionRange(0,99999);
+document.execCommand('copy');
+alert('Copied to clipboard!');
+}}
+}}
+
+function downloadExport(){{
+const ext=currentExportFilename.split('.').pop();
+const mt=ext==='csv'?'text/csv':'text/plain';
+try{{
+const b=new Blob([currentExportContent],{{type:mt+';charset=utf-8'}});
+const u=URL.createObjectURL(b);
+const a=document.createElement('a');
+a.style.display='none';
+a.href=u;
+a.download=currentExportFilename;
+document.body.appendChild(a);
+a.click();
+setTimeout(()=>{{document.body.removeChild(a);URL.revokeObjectURL(u);}},100);
+}}catch(e){{
+alert('Download not supported on this device. Please use Copy to Clipboard instead.');
+}}
+}}
+
+async function exportVocab(fmt){{
+if(!vocab.length){{alert('No vocabulary!');return;}}
+let c,fn,title;
+if(fmt==='csv'){{
+c=`${{srcName}},${{tgtName}}\\n`+vocab.map(v=>`"${{(v.baseform||v.clean).replace(/"/g,'""')}}","${{(v.translation||'').replace(/"/g,'""')}}"`).join('\\n');
+fn=`vocab_${{audioName}}_${{srcLang}}-${{tgtLang}}.csv`;
+title='Export as CSV';
+}}else{{
+c=`${{srcName}} Vocabulary\\n`+'='.repeat(30)+'\\n\\n'+vocab.map(v=>`${{v.baseform||v.clean}} — ${{v.translation||'?'}}`).join('\\n');
+fn=`vocab_${{audioName}}_${{srcLang}}-${{tgtLang}}.txt`;
+title='Export as TXT';
+}}
+
+// On mobile, always show modal for easy copy/paste
+if(isMobile()){{
+showExportModal(c,fn,title);
+}}else{{
+// On desktop, try direct download first, fallback to modal
+try{{
+const mt=fmt==='csv'?'text/csv':'text/plain';
+const b=new Blob([c],{{type:mt+';charset=utf-8'}});
+const u=URL.createObjectURL(b);
+const a=document.createElement('a');
+a.style.display='none';
+a.href=u;
+a.download=fn;
+document.body.appendChild(a);
+a.click();
+setTimeout(()=>{{document.body.removeChild(a);URL.revokeObjectURL(u);}},100);
+}}catch(e){{
+showExportModal(c,fn,title);
+}}
+}}
+}}
+
+// Close modal on backdrop click
+document.getElementById('exportModal').addEventListener('click',function(e){{if(e.target===this)closeExportModal();}});
+
 window.addEventListener('load',init);
 </script></body></html>'''
 
@@ -211,7 +322,23 @@ body.hide-trans .trans{{display:none}}
 .fab:hover{{transform:scale(1.05)}}
 .fab .badge{{position:absolute;top:-4px;right:-4px;background:var(--accent);color:white;min-width:22px;height:22px;padding:0 6px;border-radius:100px;font-size:.75rem;font-weight:600;display:flex;align-items:center;justify-content:center}}
 .footer{{padding:1.5rem;text-align:center;color:var(--ink-muted);font-size:.8125rem;border-top:1px solid var(--border);background:var(--paper-warm)}}
-@media print{{.controls,.vp,.fab,.tooltip,.vp-backdrop{{display:none!important}}.app{{box-shadow:none}}body{{padding:0;background:white}}}}
+/* Export modal styles */
+.export-modal{{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:2000;display:none;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(2px)}}
+.export-modal.visible{{display:flex}}
+.export-box{{background:var(--paper);border-radius:12px;max-width:400px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.2)}}
+.export-header{{padding:1rem 1.25rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}}
+.export-header h3{{font-family:var(--serif);font-size:1.125rem;font-weight:600}}
+.export-close{{width:32px;height:32px;border-radius:50%;background:var(--paper-warm);border:1px solid var(--border);color:var(--ink);font-size:1.125rem;cursor:pointer;display:grid;place-items:center}}
+.export-content{{padding:1rem 1.25rem;overflow-y:auto;flex:1}}
+.export-content textarea{{width:100%;height:200px;border:1px solid var(--border);border-radius:8px;padding:.75rem;font-family:monospace;font-size:.8125rem;resize:vertical;background:var(--paper-warm)}}
+.export-actions{{padding:1rem 1.25rem;border-top:1px solid var(--border);display:flex;gap:.5rem}}
+.export-actions button{{flex:1;padding:.625rem;font-size:.8125rem;font-weight:500;border-radius:6px;cursor:pointer;min-height:40px}}
+.export-actions .copy-btn{{background:var(--ink);color:var(--paper);border:none}}
+.export-actions .copy-btn:hover{{background:var(--ink-light)}}
+.export-actions .download-btn{{background:var(--paper-warm);color:var(--ink);border:1px solid var(--border)}}
+.export-actions .download-btn:hover{{background:var(--paper-dark)}}
+.export-hint{{font-size:.75rem;color:var(--ink-muted);text-align:center;margin-top:.75rem}}
+@media print{{.controls,.vp,.fab,.tooltip,.vp-backdrop,.export-modal{{display:none!important}}.app{{box-shadow:none}}body{{padding:0;background:white}}}}
 </style></head>
 <body>
 <div class="app">
@@ -228,15 +355,24 @@ body.hide-trans .trans{{display:none}}
 <div class="vp-footer"><button class="exp" onclick="exportVocab('csv')">CSV</button><button class="exp" onclick="exportVocab('txt')">TXT</button><button class="clr" onclick="clearVocab()">Clear</button></div>
 </aside>
 <button class="fab" onclick="toggleVP()" title="Vocabulary"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg><span class="badge" id="vpBadge" style="display:none">0</span></button>
+<!-- Export Modal for mobile-friendly export -->
+<div class="export-modal" id="exportModal">
+<div class="export-box">
+<div class="export-header"><h3 id="exportTitle">Export Vocabulary</h3><button class="export-close" onclick="closeExportModal()">×</button></div>
+<div class="export-content"><textarea id="exportText" readonly></textarea><p class="export-hint">On mobile: Copy text above, then paste into Notes or a file</p></div>
+<div class="export-actions"><button class="copy-btn" onclick="copyExport()">Copy to Clipboard</button><button class="download-btn" onclick="downloadExport()">Download File</button></div>
+</div>
+</div>
 <script>
 const segments={segs_json};
 const wordInfo={words_json};
 const textName="{safe_name}";
 const srcLang="{src}",tgtLang="{tgt}",srcName="{src_name}",tgtName="{tgt_name}";
 let transVis=true,vocab=[],curTTWord=null,ttTimeout=null;
+let currentExportContent='',currentExportFilename='';
 const tooltip=document.getElementById('tooltip');
 
-function init(){{render();loadVocab();document.addEventListener('keydown',e=>{{if(e.code==='Escape'){{hideTT();if(document.getElementById('vp').classList.contains('open'))toggleVP();}}}});document.addEventListener('click',e=>{{if(!e.target.closest('.word')&&!e.target.closest('.tooltip'))hideTT();}});}}
+function init(){{render();loadVocab();document.addEventListener('keydown',e=>{{if(e.code==='Escape'){{hideTT();closeExportModal();if(document.getElementById('vp').classList.contains('open'))toggleVP();}}}});document.addEventListener('click',e=>{{if(!e.target.closest('.word')&&!e.target.closest('.tooltip'))hideTT();}});}}
 function render(){{const c=document.getElementById('transcript');c.innerHTML='';segments.forEach((s,si)=>{{const d=document.createElement('div');d.className='segment';d.id=`seg-${{si}}`;let wh='';if(s.words&&s.words.length){{wh=s.words.map((w,wi)=>{{const cl=w.text.replace(/[^\\p{{L}}\\p{{N}}\\-]/gu,'').toLowerCase();return`<span class="word" id="w-${{si}}-${{wi}}" data-cl="${{cl}}" onmouseenter="wordHover(event)" onmouseleave="wordLeave()" onclick="wordClick(event)">${{w.text}}</span>`;}}).join(' ');}}else{{wh=s.source.split(' ').map(w=>{{const cl=w.replace(/[^\\p{{L}}\\p{{N}}\\-]/gu,'').toLowerCase();return`<span class="word" data-cl="${{cl}}" onmouseenter="wordHover(event)" onmouseleave="wordLeave()" onclick="wordClick(event)">${{w}}</span>`;}}).join(' ');}}d.innerHTML=`<span class="ts">${{s.timestamp}}</span><div class="src-text">${{wh}}</div><div class="trans">${{s.translation||''}}</div>`;c.appendChild(d);}});vocab.forEach(v=>markSaved(v.clean));}}
 function wordClick(e){{e.preventDefault();e.stopPropagation();clearTimeout(ttTimeout);showTT(e.target);}}
 function wordHover(e){{clearTimeout(ttTimeout);showTT(e.target);}}
@@ -255,6 +391,92 @@ function saveVocab(){{localStorage.setItem(`vocab_${{srcLang}}_${{tgtLang}}_v1`,
 function loadVocab(){{try{{const s=localStorage.getItem(`vocab_${{srcLang}}_${{tgtLang}}_v1`);if(s){{vocab=JSON.parse(s);updateVPUI();vocab.forEach(v=>markSaved(v.clean));}}}}catch(e){{}}}}
 function rmWord(i){{const v=vocab[i];if(v)markUnsaved(v.clean);vocab.splice(i,1);saveVocab();updateVPUI();}}
 function clearVocab(){{if(confirm('Clear all?')){{vocab.forEach(v=>markUnsaved(v.clean));vocab=[];updateVPUI();saveVocab();}}}}
-async function exportVocab(fmt){{if(!vocab.length){{alert('No vocabulary!');return;}}let c,fn,mt;if(fmt==='csv'){{c=`${{srcName}},${{tgtName}}\\n`+vocab.map(v=>`"${{(v.baseform||v.clean).replace(/"/g,'""')}}","${{(v.translation||'').replace(/"/g,'""')}}"`).join('\\n');fn=`vocab_${{textName}}_${{srcLang}}-${{tgtLang}}.csv`;mt='text/csv';}}else{{c=`${{srcName}} Vocabulary\\n`+'='.repeat(30)+'\\n\\n'+vocab.map(v=>`${{v.baseform||v.clean}} — ${{v.translation||'?'}}`).join('\\n');fn=`vocab_${{textName}}_${{srcLang}}-${{tgtLang}}.txt`;mt='text/plain';}}const b=new Blob([c],{{type:mt+';charset=utf-8'}}),u=URL.createObjectURL(b),a=document.createElement('a');a.style.display='none';a.href=u;a.download=fn;document.body.appendChild(a);a.click();setTimeout(()=>{{document.body.removeChild(a);URL.revokeObjectURL(u);}},100);}}
+
+// Mobile-friendly export functions
+function isMobile(){{return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)||window.innerWidth<800;}}
+
+function showExportModal(content,filename,title){{
+currentExportContent=content;
+currentExportFilename=filename;
+document.getElementById('exportTitle').textContent=title;
+document.getElementById('exportText').value=content;
+document.getElementById('exportModal').classList.add('visible');
+}}
+
+function closeExportModal(){{document.getElementById('exportModal').classList.remove('visible');}}
+
+async function copyExport(){{
+try{{
+await navigator.clipboard.writeText(currentExportContent);
+const btn=document.querySelector('.copy-btn');
+const orig=btn.textContent;
+btn.textContent='Copied!';
+setTimeout(()=>btn.textContent=orig,2000);
+}}catch(e){{
+// Fallback for older browsers
+const ta=document.getElementById('exportText');
+ta.select();
+ta.setSelectionRange(0,99999);
+document.execCommand('copy');
+alert('Copied to clipboard!');
+}}
+}}
+
+function downloadExport(){{
+const ext=currentExportFilename.split('.').pop();
+const mt=ext==='csv'?'text/csv':'text/plain';
+try{{
+const b=new Blob([currentExportContent],{{type:mt+';charset=utf-8'}});
+const u=URL.createObjectURL(b);
+const a=document.createElement('a');
+a.style.display='none';
+a.href=u;
+a.download=currentExportFilename;
+document.body.appendChild(a);
+a.click();
+setTimeout(()=>{{document.body.removeChild(a);URL.revokeObjectURL(u);}},100);
+}}catch(e){{
+alert('Download not supported on this device. Please use Copy to Clipboard instead.');
+}}
+}}
+
+async function exportVocab(fmt){{
+if(!vocab.length){{alert('No vocabulary!');return;}}
+let c,fn,title;
+if(fmt==='csv'){{
+c=`${{srcName}},${{tgtName}}\\n`+vocab.map(v=>`"${{(v.baseform||v.clean).replace(/"/g,'""')}}","${{(v.translation||'').replace(/"/g,'""')}}"`).join('\\n');
+fn=`vocab_${{textName}}_${{srcLang}}-${{tgtLang}}.csv`;
+title='Export as CSV';
+}}else{{
+c=`${{srcName}} Vocabulary\\n`+'='.repeat(30)+'\\n\\n'+vocab.map(v=>`${{v.baseform||v.clean}} — ${{v.translation||'?'}}`).join('\\n');
+fn=`vocab_${{textName}}_${{srcLang}}-${{tgtLang}}.txt`;
+title='Export as TXT';
+}}
+
+// On mobile, always show modal for easy copy/paste
+if(isMobile()){{
+showExportModal(c,fn,title);
+}}else{{
+// On desktop, try direct download first, fallback to modal
+try{{
+const mt=fmt==='csv'?'text/csv':'text/plain';
+const b=new Blob([c],{{type:mt+';charset=utf-8'}});
+const u=URL.createObjectURL(b);
+const a=document.createElement('a');
+a.style.display='none';
+a.href=u;
+a.download=fn;
+document.body.appendChild(a);
+a.click();
+setTimeout(()=>{{document.body.removeChild(a);URL.revokeObjectURL(u);}},100);
+}}catch(e){{
+showExportModal(c,fn,title);
+}}
+}}
+}}
+
+// Close modal on backdrop click
+document.getElementById('exportModal').addEventListener('click',function(e){{if(e.target===this)closeExportModal();}});
+
 window.addEventListener('load',init);
 </script></body></html>'''
