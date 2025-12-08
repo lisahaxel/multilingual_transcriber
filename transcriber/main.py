@@ -99,6 +99,7 @@ class Processor:
         else:
              segs_raw = getattr(res, 'segments', [])
 
+        prev_text = None
         for s in segs_raw:
             # Normalize structure between backends
             if isinstance(s, dict):
@@ -106,23 +107,69 @@ class Processor:
             else:
                 start, end, text, words = s.start, s.end, s.text, getattr(s, 'words', [])
 
+            # Skip empty segments
+            text_stripped = text.strip() if text else ''
+            if not text_stripped:
+                continue
+            
+            # Skip segments with Unicode replacement characters (garbage)
+            if '\ufffd' in text_stripped or '�' in text_stripped:
+                continue
+            
+            # Skip hallucinated repetitive content (Whisper loop artifacts)
+            text_words = text_stripped.split()
+            if len(text_words) > 5:
+                unique_words = set(text_words)
+                if len(unique_words) <= 2 and len(text_words) > 10:
+                    log.debug(f"Skipping repetitive hallucination: {text_stripped[:50]}...")
+                    continue
+            
+            latin_chars = sum(1 for c in text_stripped if c.isalpha() and ord(c) < 0x250)
+            non_latin_chars = sum(1 for c in text_stripped if c.isalpha() and ord(c) >= 0x250)
+            
+            if non_latin_chars > latin_chars and non_latin_chars > 5:
+                log.debug(f"Skipping wrong-script hallucination: {text_stripped[:50]}...")
+                continue
+
             cleaned_words = []
             if words:
-                 for w in words:
-                    # Handle different word object structures
-                    wt = w['word'] if isinstance(w, dict) else w.word
-                    ws = w['start'] if isinstance(w, dict) else w.start
-                    we = w['end'] if isinstance(w, dict) else w.end
-                    cleaned_words.append({'text': wt.strip(), 'start': ws, 'end': we})
+                for w in words:
+                    # Handle different word object structures (dict, object, or string)
+                    if isinstance(w, dict):
+                        wt = w.get('word', w.get('text', ''))
+                        ws = w.get('start', 0)
+                        we = w.get('end', 0)
+                    elif isinstance(w, str):
+                        wt = w
+                        ws = 0
+                        we = 0
+                    else:
+                        wt = getattr(w, 'word', getattr(w, 'text', ''))
+                        ws = getattr(w, 'start', 0)
+                        we = getattr(w, 'end', 0)
+                    wt_stripped = wt.strip() if wt else ''
+                    # Skip empty words
+                    if wt_stripped:
+                        cleaned_words.append({'text': wt_stripped, 'start': ws, 'end': we})
+
+            # Skip consecutive exact duplicates (common MLX-Whisper artifact)
+            normalized = re.sub(r'[^\w\s]', '', text_stripped.lower()).strip()
+            prev_normalized = re.sub(r'[^\w\s]', '', prev_text.lower()).strip() if prev_text else None
+            
+            if normalized == prev_normalized and start < 10.0:
+                # Skip this duplicate, but update prev_text
+                prev_text = text_stripped
+                continue
 
             seg = {
                 'start': start, 'end': end,
                 'timestamp': utils.format_timestamp(start),
-                'source': text.strip(),
+                'source': text_stripped,
                 'words': cleaned_words
             }
             segments.append(seg)
             texts.append(seg['source'])
+            prev_text = text_stripped
 
         # Translate & Build Vocab
         translations = self.nlp.translate_batch(texts, actual_src, self.args.target)
