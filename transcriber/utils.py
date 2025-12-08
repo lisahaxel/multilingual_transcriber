@@ -26,11 +26,11 @@ def get_file_type(path: Path) -> Optional[str]:
 
 def extract_audio_from_video(video_path: Path) -> Optional[str]:
     """Extracts MP3 audio from video using FFmpeg."""
-    output = video_path.parent / f"{video_path.stem}_audio.mp3"
+    output = (video_path.parent / f"{video_path.stem}_audio.mp3").resolve()
     log.info("Extracting audio from video...")
     try:
         cmd = [
-            'ffmpeg', '-y', '-i', str(video_path), '-vn', 
+            'ffmpeg', '-y', '-i', str(video_path.resolve()), '-vn', 
             '-acodec', 'libmp3lame', '-b:a', '128k', '-ac', '1', str(output)
         ]
         subprocess.run(cmd, check=True, capture_output=True)
@@ -42,8 +42,11 @@ def extract_audio_from_video(video_path: Path) -> Optional[str]:
     return None
 
 def normalize_audio(file_path: Path) -> str:
-    """Normalizes audio volume using FFmpeg."""
+    """Normalizes audio volume using FFmpeg. Returns absolute path."""
+    file_path = file_path.resolve()
     output = file_path.parent / f"{file_path.stem}_normalized.mp3"
+    output = output.resolve()
+    
     log.info("Normalizing audio...")
     try:
         cmd = [
@@ -58,6 +61,8 @@ def normalize_audio(file_path: Path) -> str:
 
 def encode_audio_base64(audio_path: str) -> Tuple[str, str]:
     """Reads audio file and returns base64 string and mime type."""
+    audio_path = str(Path(audio_path).resolve())
+    
     ext = Path(audio_path).suffix.lower()
     mime = {'.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4'}.get(ext, 'audio/mpeg')
     with open(audio_path, 'rb') as f:
