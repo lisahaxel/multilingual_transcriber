@@ -26,13 +26,16 @@ class Processor:
     def _gather_files(self):
         candidates = []
         for inp in self.args.input:
-            path = Path(inp)
+            path = Path(inp).resolve()  # Use absolute paths
             if path.is_dir():
                 for cat, exts in config.EXTENSIONS.items():
                     for ext in exts:
                         candidates.extend(sorted(path.glob(f"*{ext}")))
             elif path.exists():
                 candidates.append(path)
+        
+        # Filter out any _normalized or _audio temp files
+        candidates = [f for f in candidates if '_normalized.' not in f.name and '_audio.' not in f.name]
                 
         # Filter processed unless force
         queue = []
@@ -69,29 +72,32 @@ class Processor:
 
     def _handle_media(self, path, ftype):
         temp_files = []
-        audio_path = str(path)
+        audio_path = str(path.resolve())  # Use absolute path
         
         if ftype == 'video':
             audio_path = utils.extract_audio_from_video(path)
-            if not audio_path: return
+            if not audio_path:
+                return
             temp_files.append(audio_path)
             
         normalized = utils.normalize_audio(Path(audio_path))
         if normalized != audio_path:
             temp_files.append(normalized)
+        
+        transcribe_path = normalized
             
         # Transcribe
         src_lang = self.args.source 
-        res, _, detected = self.transcriber.transcribe(normalized, src_lang)
+        res, _, detected = self.transcriber.transcribe(transcribe_path, src_lang)
         actual_src = src_lang or detected
         
         # Prepare Data
         segments = []
         texts = []
-        if isinstance(res, dict): # Faster Whisper dict result
-             segs_raw = res['segments']
-        else: # MLX/Standard object result
-             segs_raw = res['segments'] if isinstance(res, dict) else res.segments
+        if isinstance(res, dict):
+             segs_raw = res.get('segments', [])
+        else:
+             segs_raw = getattr(res, 'segments', [])
 
         for s in segs_raw:
             # Normalize structure between backends
@@ -125,12 +131,13 @@ class Processor:
             
         word_info = self.nlp.build_vocabulary(segments, actual_src, self.args.target)
         
-        # Generate HTML
+        # Generate HTML - use original path for output naming
         output = path.parent / f"{path.stem}_{actual_src}-{self.args.target}_interactive.html"
-        audio_b64, mime = utils.encode_audio_base64(normalized)
+        audio_b64, mime = utils.encode_audio_base64(transcribe_path)
         
         footer = "Transcribed with Whisper"
-        if actual_src != self.args.target: footer += " · Translated with Google"
+        if actual_src != self.args.target:
+            footer += " · Translated with Google"
         
         html = templates.get_av_html(
             actual_src, config.LANGUAGES.get(actual_src, actual_src),
@@ -145,9 +152,13 @@ class Processor:
         with open(output, 'w', encoding='utf-8') as f:
             f.write(html)
             
-        # Cleanup
+        # Cleanup temp files
         for t in temp_files:
-            if os.path.exists(t): os.remove(t)
+            try:
+                if os.path.exists(t):
+                    os.remove(t)
+            except Exception as e:
+                log.debug(f"Failed to remove temp file {t}: {e}")
         
         log.info(f"Created: {output.name}")
 
